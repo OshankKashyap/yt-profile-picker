@@ -1,6 +1,6 @@
 /**
  * YT Profile Picker - Picker Logic
- * Handles profile selection, keyboard shortcuts, index shift verification,
+ * Handles profile selection, keyboard shortcuts, cold-start path,
  * and seamless same-tab navigation.
  */
 
@@ -25,6 +25,7 @@
   let focusedIndex = 0;
   let settings = {};
 
+  const loadingStateEl = document.getElementById("loading-state");
   const profileListEl = document.getElementById("profile-list");
   const errorContainerEl = document.getElementById("error-container");
   const errorTextEl = document.getElementById("error-text");
@@ -66,7 +67,7 @@
     const tabId = await getCurrentTabId();
     try {
       await browser.runtime.sendMessage({
-        type: "BYPASS_TARGET",
+        type: "RELEASE_TAB",
         url: targetUrl,
         tabId,
       });
@@ -85,7 +86,7 @@
     const tabId = await getCurrentTabId();
 
     try {
-      // Edge Case: Index shift verification (account signed out or shifted since cache)
+      // Index shift verification against cached accounts
       const verification = await browser.runtime.sendMessage({
         type: "VERIFY_ACCOUNT_INDEX",
         account,
@@ -93,7 +94,7 @@
 
       if (!verification || !verification.valid) {
         console.warn(
-          "[YT Profile Picker] Index shift detected: account no longer matches or was signed out. Falling back to target untouched.",
+          "[YT Profile Picker] Index shift detected: account no longer in cache. Falling back to target untouched.",
         );
         await continueUntouched();
         return;
@@ -104,14 +105,29 @@
           ? verification.authuser
           : account.authuser;
 
-      // Save last used account identifier
-      const accountId = account.email || account.name;
+      console.log(
+        "[YT Profile Picker] Verified account:",
+        verification.name || account.name,
+        "authuser:",
+        activeAuthuser,
+      );
+
+      // Save last used account identifier using unique Gaia ID
+      const accountId = account.id;
       await browser.runtime.sendMessage({
         type: "SET_LAST_USED",
         accountId,
       });
 
       const finalUrl = appendAuthuser(targetUrl, activeAuthuser);
+
+      try {
+        await browser.runtime.sendMessage({
+          type: "RELEASE_TAB",
+          url: finalUrl,
+          tabId,
+        });
+      } catch {}
 
       if (tabId) {
         browser.tabs.update(tabId, { url: finalUrl });
@@ -125,13 +141,10 @@
   }
 
   function renderAccounts(accounts, lastUsedId) {
-    profileListEl.innerHTML = "";
+    loadingStateEl.classList.add("hidden");
     errorContainerEl.classList.add("hidden");
-
-    if (!accounts || accounts.length === 0) {
-      showErrorState("No signed-in YouTube accounts found.");
-      return;
-    }
+    profileListEl.classList.remove("hidden");
+    profileListEl.innerHTML = "";
 
     let initialFocusIndex = 0;
 
@@ -141,9 +154,10 @@
       item.tabIndex = 0;
       item.setAttribute("role", "button");
       item.setAttribute("data-index", String(index));
+      item.setAttribute("data-id", String(acc.id));
       item.setAttribute(
         "aria-label",
-        `${acc.name} (${acc.email || "No email"})`,
+        `${acc.name} (${acc.byline || "Profile"})`,
       );
 
       // Avatar container
@@ -172,19 +186,19 @@
       nameEl.textContent = acc.name;
       details.appendChild(nameEl);
 
-      if (acc.email) {
-        const emailEl = document.createElement("div");
-        emailEl.className = "profile-email";
-        emailEl.textContent = acc.email;
-        details.appendChild(emailEl);
+      const subtitleText = acc.byline || acc.email || acc.handle;
+      if (subtitleText) {
+        const subtitleEl = document.createElement("div");
+        subtitleEl.className = "profile-email";
+        subtitleEl.textContent = subtitleText;
+        details.appendChild(subtitleEl);
       }
 
       // Meta (badges & shortcut indicator)
       const meta = document.createElement("div");
       meta.className = "profile-meta";
 
-      const isLastUsed =
-        lastUsedId && (acc.email === lastUsedId || acc.name === lastUsedId);
+      const isLastUsed = lastUsedId && acc.id === lastUsedId;
       if (isLastUsed) {
         const badge = document.createElement("span");
         badge.className = "badge badge-last-used";
@@ -232,7 +246,8 @@
   }
 
   function showErrorState(message) {
-    profileListEl.innerHTML = "";
+    loadingStateEl.classList.add("hidden");
+    profileListEl.classList.add("hidden");
     errorContainerEl.classList.remove("hidden");
     if (message) {
       errorTextEl.textContent = message;
@@ -298,12 +313,16 @@
         document.activeElement.classList.contains("profile-item")
       ) {
         e.preventDefault();
+        const id = document.activeElement.getAttribute("data-id");
         const idx = parseInt(
           document.activeElement.getAttribute("data-index"),
           10,
         );
-        if (!isNaN(idx) && accountsList[idx]) {
-          selectAccount(accountsList[idx]);
+        const targetAcc =
+          accountsList.find((a) => a.id === id) ||
+          (!isNaN(idx) ? accountsList[idx] : null);
+        if (targetAcc) {
+          selectAccount(targetAcc);
         }
       }
     }
@@ -322,7 +341,7 @@
     }
   });
 
-  // Initialization: fetch accounts and settings
+  // Initialization: fetch accounts (triggers cold-start path if cache is cold)
   async function initPicker() {
     try {
       const [accountsRes, settingsRes] = await Promise.all([
@@ -333,8 +352,19 @@
       settings = (settingsRes && settingsRes.settings) || {};
       accountsList = (accountsRes && accountsRes.accounts) || [];
 
-      if (accountsRes && accountsRes.error && accountsList.length === 0) {
-        showErrorState(`Failed to load accounts: ${accountsRes.error}`);
+      // If 0 or 1 account, rule says: pass through silently
+      if (accountsList.length <= 1) {
+        if (
+          accountsList.length === 0 &&
+          accountsRes &&
+          accountsRes.timestamp === 0
+        ) {
+          // Timeout or error during cold-start: show fallback button
+          showErrorState("Could not detect multiple accounts.");
+          return;
+        }
+        // Exactly 1 or 0 verified accounts: proceed to YouTube untouched
+        continueUntouched();
         return;
       }
 

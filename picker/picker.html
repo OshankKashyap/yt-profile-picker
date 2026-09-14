@@ -30,14 +30,20 @@
                         </svg>
                     </div>
                     <h1 id="picker-title">Who's watching?</h1>
-                    <p class="picker-subtitle">
+                    <p class="picker-subtitle" id="picker-subtitle">
                         Select an account to load YouTube
                     </p>
                 </header>
 
+                <!-- Loading State (Cold-start warmup) -->
+                <div class="loading-state" id="loading-state">
+                    <div class="spinner"></div>
+                    <p class="loading-text">Finding accounts...</p>
+                </div>
+
                 <!-- Account List -->
                 <div
-                    class="profile-list"
+                    class="profile-list hidden"
                     id="profile-list"
                     role="listbox"
                     aria-label="YouTube Accounts"
@@ -45,10 +51,10 @@
                     <!-- Rendered dynamically -->
                 </div>
 
-                <!-- Error / Fallback State -->
+                <!-- Error / Fallback State (Cold-start timeout or no multi-accounts) -->
                 <div class="error-container hidden" id="error-container">
                     <p class="error-text" id="error-text">
-                        Couldn't load accounts from YouTube.
+                        No multiple accounts detected.
                     </p>
                     <button
                         type="button"

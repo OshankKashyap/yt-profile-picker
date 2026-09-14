@@ -4,13 +4,27 @@ A lightweight Firefox WebExtension (Manifest V2) that provides a Netflix-style p
 
 ---
 
+## Anti-Bot Architecture (Page World Enumeration)
+
+Raw InnerTube calls from extension background contexts, `curl`, or sandboxes trigger Google's automated query blocks (`<title>Sorry...</title>`). To remain 100% compliant with Google's anti-bot protections:
+
+1. **Page World Enumeration (`content.js`)**: Runs on `*.youtube.com` at `document_idle`.
+   - Accesses page configuration safely via Firefox `window.wrappedJSObject?.ytcfg`.
+   - Derives `SAPISIDHASH` Authorization from the session `SAPISID` cookie in `document.cookie`.
+   - Executes a same-origin `fetch("/youtubei/v1/account/accounts_list?prettyPrint=false")` with credentials `"include"` and native YouTube client headers (`X-Goog-Visitor-Id`, `X-Youtube-Client-Name: 1`, `X-Youtube-Client-Version`).
+   - Treats any HTML response (`<title>Sorry...`) as graceful failure.
+2. **Background Cache (`background.js`)**: Caches discovered accounts with a 10-minute TTL. The picker **always** reads from this cache and never calls InnerTube itself.
+3. **Automatic Refresh**: Normal browsing keeps the cache warm; `content.js` re-enumerates at most once per tab per 10 minutes.
+4. **Cold-Start Path**: If the picker opens with no cached accounts, `background.js` opens a temporary background tab to `youtube.com` and waits up to 5 seconds for `content.js` to report accounts. On timeout, it falls back to "Continue with current account", never blocking navigation.
+
+---
+
 ## Features
 
 - **Netflix-Style Profile UX**: Dark theme matching YouTube (`#0f0f0f` background, `#181818` card, `#ff0000` red accent).
 - **Same-Tab Flow**: Replaces the YouTube request in the same tab—never spawns unwanted tabs.
 - **Fast & Responsive**: Cached accounts resolve synchronously in <1ms; perceived UI latency <50ms.
 - **Keyboard First**: Direct selection with number keys (`1`–`4`), arrow navigation (`↑`/`↓`/`←`/`→`), `Enter` to confirm, and `Esc` to cancel and proceed untouched.
-- **Defensive InnerTube Resolution**: Queries YouTube's native `POST /youtubei/v1/account/accounts_list` endpoint with fallback to `SAPISIDHASH` authorization and defensive JSON tree-walking.
 - **Badges**: Shows "Last used" and "Current" badges on your profiles.
 - **Toolbar Quick-Switcher**: Popup allows one-click opening of YouTube under any account in a new tab.
 - **Configurable Modes**:
@@ -59,6 +73,7 @@ A lightweight Firefox WebExtension (Manifest V2) that provides a Netflix-style p
 ## Verification & Test Checklist
 
 - [ ] **Initial Visit Prompt**: Type `youtube.com` into the address bar and press Enter. The "Who's watching?" profile picker appears in the same tab showing your accounts.
+- [ ] **Cold-Start Warmup**: If cache is empty, the picker displays "Finding accounts..." while the background warmup tab enumerates, then immediately reveals your profiles.
 - [ ] **Keyboard Selection (1–4)**: Press `1` or `2` on your keyboard. YouTube immediately loads under that account (`authuser=0` or `authuser=1`).
 - [ ] **Arrow Keys & Enter**: Navigate again to `youtube.com`. Use `Arrow Down` / `Arrow Up` to focus an account card, then press `Enter`.
 - [ ] **Cancel / Untouched Navigation**: Navigate to `youtube.com`. Press `Esc` or click "Continue without switching". The page opens untouched under your default account without re-prompting.
@@ -76,11 +91,12 @@ A lightweight Firefox WebExtension (Manifest V2) that provides a Netflix-style p
 ```text
 yt-profile-picker/
 ├── manifest.json              # WebExtension Manifest V2 specification
-├── background.js              # Blocking webRequest listener, InnerTube API fetcher, cache
+├── content.js                 # In-page enumeration (ytcfg + same-origin accounts_list)
+├── background.js              # Blocking webRequest listener, cache manager, cold-start handler
 ├── picker/
 │   ├── picker.html            # Profile selection UI (Who's watching?)
-│   ├── picker.css             # Dark theme, hover lift, focus rings, badges
-│   └── picker.js              # Keyboard shortcuts, same-tab redirection, index-shift guard
+│   ├── picker.css             # Dark theme, spinner, hover lift, focus rings, badges
+│   └── picker.js              # Keyboard shortcuts, same-tab redirection, cold-start handling
 ├── popup/
 │   ├── popup.html             # Toolbar quick switcher
 │   ├── popup.css              # Compact dark theme layout
@@ -104,17 +120,18 @@ yt-profile-picker/
 ### "No signed-in YouTube accounts detected"
 
 - Make sure you are signed into YouTube at `https://www.youtube.com`.
-- If you just logged in, click the toolbar icon and click **Refresh Accounts**, or go to Settings and click **Clear & Refresh Accounts**.
+- If you just logged in, visit any YouTube tab or click the toolbar icon and click **Refresh Accounts**.
 - Check the **Debug & Diagnostics** section in Settings and click **Inspect Raw JSON** to view the response from YouTube.
 
-### YouTube returned 401 or 403
+### Anti-bot HTML response ("Sorry... automated queries")
 
-- YouTube occasionally requires SAPISID hash authentication for the InnerTube endpoint.
-- The extension automatically retrieves the `SAPISID` cookie and computes the required `SAPISIDHASH` header using WebCrypto SHA-1. Ensure third-party cookie blockers are not stripping YouTube session cookies.
+- Background scripts and external curl requests are blocked by Google anti-bot systems.
+- The extension executes all `accounts_list` fetches from inside `content.js` on `youtube.com` via same-origin requests with full browser credentials, bypassing the block.
+- If Google serves an anti-bot challenge to the browser itself, complete the CAPTCHA once on `youtube.com`; normal operation resumes immediately.
 
 ### Account index shifted or account signed out
 
-- If an account was signed out or Google shifted indices, the extension verifies index freshness before redirecting. If the account is no longer valid, it falls back to loading the target untouched and logs a warning in the console.
+- If an account was signed out or Google shifted indices, the extension checks cached accounts before redirecting. If the account is no longer valid, it falls back to loading the target untouched and logs a warning in the console.
 
 ### Private / Incognito Browsing
 

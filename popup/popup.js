@@ -45,7 +45,7 @@
 
   async function openAccountInNewTab(account) {
     const targetUrl = `https://www.youtube.com/?authuser=${account.authuser}`;
-    const accountId = account.email || account.name;
+    const accountId = account.id;
 
     try {
       await browser.runtime.sendMessage({
@@ -75,6 +75,7 @@
       card.className = "account-card";
       card.tabIndex = 0;
       card.setAttribute("role", "button");
+      card.setAttribute("data-id", String(acc.id));
       card.setAttribute("aria-label", `Open YouTube as ${acc.name}`);
 
       // Avatar
@@ -103,10 +104,11 @@
       nameEl.textContent = acc.name;
       info.appendChild(nameEl);
 
-      if (acc.email) {
+      const subtitle = acc.byline || acc.email || acc.handle;
+      if (subtitle) {
         const emailEl = document.createElement("div");
         emailEl.className = "account-email";
-        emailEl.textContent = acc.email;
+        emailEl.textContent = subtitle;
         info.appendChild(emailEl);
       }
 
@@ -114,8 +116,7 @@
       const badges = document.createElement("div");
       badges.className = "account-badges";
 
-      const isLastUsed =
-        lastUsedId && (acc.email === lastUsedId || acc.name === lastUsedId);
+      const isLastUsed = lastUsedId && acc.id === lastUsedId;
       if (isLastUsed) {
         const b = document.createElement("span");
         b.className = "badge badge-last-used";

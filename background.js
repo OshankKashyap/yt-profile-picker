@@ -1,7 +1,11 @@
 /**
  * YT Profile Picker - Background Script (Manifest V2)
- * Handles account enumeration via YouTube InnerTube, blocking webRequest interception,
- * account caching, and communication with picker/popup/options pages.
+ *
+ * Anti-Bot Compliant Architecture:
+ * - NEVER sends raw youtubei requests from background/curl (avoids Google anti-bot HTML blocks).
+ * - Relies entirely on in-page content.js enumeration and maintains a 10-minute cache.
+ * - Handles cold-start path via temporary background tab with a 10s timeout and race-free about:blank creation.
+ * - Blocking webRequest listener with one-shot releasedTabs tracking to prevent redirect loops.
  */
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache validity
@@ -18,7 +22,6 @@ let accountCache = {
   accounts: null,
   rawJson: null,
   timestamp: 0,
-  error: null,
 };
 
 // Cached settings in memory for zero-overhead synchronous evaluation
@@ -27,11 +30,26 @@ let cachedSettings = { ...DEFAULT_SETTINGS };
 // Track last prompted target per tab to avoid duplicate consecutive prompts
 const lastPromptedPerTab = new Map();
 
-// URLs explicitly bypassed by user action (e.g. Esc/Cancel/bypass)
+// URLs explicitly bypassed by user action (e.g. Esc/Cancel)
 const bypassedTargets = new Set();
 
-// Active in-flight promise to avoid duplicate concurrent fetches
-let pendingFetch = null;
+// IDs of tabs released by picker (one-shot release to prevent redirect loops)
+const releasedTabs = new Set();
+
+// IDs of background warmup tabs to prevent interception loops
+const warmupTabIds = new Set();
+
+// Callbacks waiting for account enumeration (cold-start path)
+const accountWaiters = [];
+
+function notifyAccountWaiters(accounts) {
+  while (accountWaiters.length > 0) {
+    const cb = accountWaiters.shift();
+    try {
+      cb(accounts);
+    } catch {}
+  }
+}
 
 /* =========================================================================
    SETTINGS MANAGEMENT
@@ -60,256 +78,93 @@ browser.storage.onChanged.addListener((changes, area) => {
 });
 
 /* =========================================================================
-   ACCOUNTS_LIST PARSER (ADJUST IF YOUTUBE CHANGES SHAPE)
-   =========================================================================
-   InnerTube endpoint: POST https://www.youtube.com/youtubei/v1/account/accounts_list
-   Extracts: { name, email, avatarUrl, authuser, isActive }
-   Prefers an index found inside signin/switch URLs in the response;
-   falls back to array order (0, 1, 2...).
+   COLD-START ENUMERATION VIA BACKGROUND TAB (RACE-FREE & 10S WAIT)
    ========================================================================= */
 
-function extractText(obj) {
-  if (!obj) return "";
-  if (typeof obj === "string") return obj.trim();
-  if (obj.simpleText) return String(obj.simpleText).trim();
-  if (Array.isArray(obj.runs) && obj.runs.length > 0) {
-    return obj.runs
-      .map((r) => r.text || "")
-      .join("")
-      .trim();
-  }
-  return "";
-}
-
-function extractThumbnail(obj) {
-  if (!obj) return null;
-  if (typeof obj === "string" && obj.startsWith("http")) return obj;
-  const thumbs =
-    obj.thumbnails ||
-    (obj.accountPhoto && obj.accountPhoto.thumbnails) ||
-    (obj.avatar && obj.avatar.thumbnails);
-  if (Array.isArray(thumbs) && thumbs.length > 0) {
-    // Pick largest thumbnail (last)
-    const best = thumbs[thumbs.length - 1];
-    return best && best.url ? best.url : null;
-  }
-  return null;
-}
-
-function extractAuthuserFromNode(node) {
+async function warmCacheViaBackgroundTab() {
+  // If an existing YouTube tab is already open, ask it to enumerate
   try {
-    const str = JSON.stringify(node);
-    // Matches authuser=1, authuser/1, "authuser": 1, "authuser": "1"
-    const m =
-      str.match(/authuser[=/](\d+)/i) ||
-      str.match(/["']authuser["']\s*:\s*"?(\d+)"?/i);
-    if (m && m[1] !== undefined) {
-      return parseInt(m[1], 10);
+    const existingTabs = await browser.tabs.query({
+      url: "*://*.youtube.com/*",
+    });
+    const realTab = existingTabs.find((t) => !warmupTabIds.has(t.id));
+    if (realTab && realTab.id) {
+      browser.tabs
+        .sendMessage(realTab.id, { type: "FORCE_ENUMERATE" })
+        .catch(() => {});
     }
   } catch {}
-  return null;
-}
 
-function parseAccountsList(data) {
-  if (!data || typeof data !== "object") return [];
-
-  const rawItems = [];
-
-  // Recursive walk to find account renderers defensively
-  function walk(node) {
-    if (!node || typeof node !== "object") return;
-
-    if (node.accountItem && typeof node.accountItem === "object") {
-      rawItems.push(node.accountItem);
-      return;
-    }
-    if (
-      node.accountItemRenderer &&
-      typeof node.accountItemRenderer === "object"
-    ) {
-      rawItems.push(node.accountItemRenderer);
-      return;
-    }
-    if (
-      node.accountName ||
-      (node.accountPhoto && (node.accountByline || node.email || node.title))
-    ) {
-      rawItems.push(node);
-      return;
-    }
-
-    if (Array.isArray(node)) {
-      for (const item of node) walk(item);
-    } else {
-      for (const key of Object.keys(node)) {
-        walk(node[key]);
-      }
-    }
-  }
-
-  walk(data);
-
-  const accounts = [];
-  const seen = new Set();
-
-  for (let i = 0; i < rawItems.length; i++) {
-    const item = rawItems[i];
-    const name =
-      extractText(item.accountName) ||
-      extractText(item.title) ||
-      extractText(item.name) ||
-      `Account ${i + 1}`;
-    const email =
-      extractText(item.accountByline) ||
-      extractText(item.email) ||
-      extractText(item.byline) ||
-      "";
-    const avatarUrl =
-      extractThumbnail(item.accountPhoto) ||
-      extractThumbnail(item.avatar) ||
-      extractThumbnail(item);
-    const parsedAuthuser = extractAuthuserFromNode(item);
-    const authuser = parsedAuthuser !== null ? parsedAuthuser : i;
-    const isActive = Boolean(item.isSelected || item.hasCheckmark);
-
-    const dedupKey = `${name}|${email}|${authuser}`;
-    if (seen.has(dedupKey)) continue;
-    seen.add(dedupKey);
-
-    accounts.push({
-      name,
-      email: email || null,
-      avatarUrl,
-      authuser,
-      isActive,
+  // If a warmup tab is already active, wait on existing waiters queue (up to 10s)
+  if (warmupTabIds.size > 0) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(
+        () => resolve(accountCache.accounts || []),
+        10000,
+      );
+      accountWaiters.push((accounts) => {
+        clearTimeout(timer);
+        resolve(accounts);
+      });
     });
   }
 
-  // Active-account fallback: if no item was flagged isSelected, mark first account (authuser 0) as active
-  if (accounts.length > 0 && !accounts.some((a) => a.isActive)) {
-    accounts[0].isActive = true;
+  // Work Item 3: Race-free warmup tab creation
+  // Create tab with about:blank, add ID to warmupTabIds BEFORE navigating to youtube
+  let warmupTab = null;
+  try {
+    warmupTab = await browser.tabs.create({
+      url: "about:blank",
+      active: false,
+    });
+    warmupTabIds.add(warmupTab.id);
+    await browser.tabs.update(warmupTab.id, {
+      url: "https://www.youtube.com/",
+    });
+  } catch (err) {
+    console.warn("[YT Profile Picker] Could not create warmup tab:", err);
+    if (warmupTab && warmupTab.id) {
+      warmupTabIds.delete(warmupTab.id);
+      browser.tabs.remove(warmupTab.id).catch(() => {});
+    }
+    return accountCache.accounts || [];
   }
 
-  return accounts;
-}
+  // Work Item 4: Wait up to 10s for content.js to report accounts
+  return new Promise((resolve) => {
+    let resolved = false;
 
-/* =========================================================================
-   SAPISIDHASH & INNERTUBE FETCHER
-   ========================================================================= */
-
-async function computeSapisidHash(sapisid) {
-  const ts = Math.floor(Date.now() / 1000);
-  const origin = "https://www.youtube.com";
-  const str = `${ts} ${origin} ${sapisid}`;
-  const buffer = new TextEncoder().encode(str);
-  const digest = await crypto.subtle.digest("SHA-1", buffer);
-  const hashArray = Array.from(new Uint8Array(digest));
-  const sha1 = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-  return `SAPISIDHASH ${ts}_${sha1}`;
-}
-
-async function fetchRawAccountsList() {
-  const endpoint = "https://www.youtube.com/youtubei/v1/account/accounts_list";
-  const payload = {
-    context: {
-      client: {
-        clientName: "WEB",
-        clientVersion: "2.20240101.00.00",
-        hl: "en",
-      },
-    },
-  };
-
-  const headers = {
-    "Content-Type": "application/json",
-  };
-
-  let res = await fetch(endpoint, {
-    method: "POST",
-    credentials: "include",
-    headers,
-    body: JSON.stringify(payload),
-  });
-
-  // If 401 or 403, retry with SAPISIDHASH authorization header
-  if (res.status === 401 || res.status === 403) {
-    try {
-      const cookie =
-        (await browser.cookies.get({
-          url: "https://www.youtube.com",
-          name: "SAPISID",
-        })) ||
-        (await browser.cookies.get({
-          url: "https://www.google.com",
-          name: "SAPISID",
-        }));
-
-      if (cookie && cookie.value) {
-        const authHeader = await computeSapisidHash(cookie.value);
-        headers["Authorization"] = authHeader;
-        headers["X-Origin"] = "https://www.youtube.com";
-
-        res = await fetch(endpoint, {
-          method: "POST",
-          credentials: "include",
-          headers,
-          body: JSON.stringify(payload),
-        });
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        console.log(
+          "[BG] [YT Profile Picker] Warmup tab timed out after 10s; returning uncached.",
+        );
+        resolve(accountCache.accounts || []);
       }
-    } catch (authErr) {
-      console.warn(
-        "[YT Profile Picker] SAPISIDHASH calculation failed:",
-        authErr,
-      );
+    }, 10000);
+
+    function onDone(accounts) {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        cleanup();
+        resolve(accounts);
+      }
     }
-  }
 
-  if (!res.ok) {
-    throw new Error(`InnerTube accounts_list HTTP ${res.status}`);
-  }
+    accountWaiters.push(onDone);
 
-  return await res.json();
-}
-
-async function resolveAccounts(force = false) {
-  const isFresh =
-    accountCache.accounts && Date.now() - accountCache.timestamp < CACHE_TTL_MS;
-  if (!force && isFresh) {
-    return accountCache.accounts;
-  }
-
-  if (pendingFetch) {
-    return pendingFetch;
-  }
-
-  pendingFetch = (async () => {
-    try {
-      const rawData = await fetchRawAccountsList();
-      const parsed = parseAccountsList(rawData);
-      accountCache = {
-        accounts: parsed,
-        rawJson: rawData,
-        timestamp: Date.now(),
-        error: null,
-      };
-
-      await browser.storage.local.set({
-        cachedAccounts: parsed,
-        cacheTimestamp: accountCache.timestamp,
-        lastRawJson: rawData,
-      });
-
-      return parsed;
-    } catch (err) {
-      console.warn("[YT Profile Picker] resolveAccounts error:", err);
-      accountCache.error = err.message || "Failed to resolve accounts";
-      return accountCache.accounts || [];
-    } finally {
-      pendingFetch = null;
+    function cleanup() {
+      const idx = accountWaiters.indexOf(onDone);
+      if (idx !== -1) accountWaiters.splice(idx, 1);
+      if (warmupTab && warmupTab.id) {
+        warmupTabIds.delete(warmupTab.id);
+        browser.tabs.remove(warmupTab.id).catch(() => {});
+      }
     }
-  })();
-
-  return pendingFetch;
+  });
 }
 
 /* =========================================================================
@@ -324,17 +179,14 @@ async function init() {
       "cacheTimestamp",
       "lastRawJson",
     ]);
-    if (data.cachedAccounts && data.cacheTimestamp) {
+    if (
+      data.cachedAccounts &&
+      data.cachedAccounts.length > 0 &&
+      data.cacheTimestamp
+    ) {
       accountCache.accounts = data.cachedAccounts;
       accountCache.timestamp = data.cacheTimestamp;
       accountCache.rawJson = data.lastRawJson || null;
-    }
-    // Eagerly resolve if missing or stale
-    if (
-      !accountCache.accounts ||
-      Date.now() - accountCache.timestamp > CACHE_TTL_MS
-    ) {
-      resolveAccounts().catch(() => {});
     }
   } catch (err) {
     console.warn("[YT Profile Picker] Init error:", err);
@@ -347,17 +199,17 @@ init();
 browser.cookies.onChanged.addListener((changeInfo) => {
   const domain = changeInfo.cookie.domain || "";
   if (domain.includes("youtube.com") || domain.includes("google.com")) {
-    const sensitiveCookies = [
+    const sensitive = [
       "SAPISID",
       "LOGIN_INFO",
       "SID",
       "SSID",
       "APISID",
-      "__Secure-3PSID",
+      "__Secure-3PAPISID",
+      "__Secure-1PAPISID",
     ];
-    if (sensitiveCookies.includes(changeInfo.cookie.name)) {
+    if (sensitive.includes(changeInfo.cookie.name)) {
       accountCache.timestamp = 0;
-      resolveAccounts(true).catch(() => {});
     }
   }
 });
@@ -365,6 +217,8 @@ browser.cookies.onChanged.addListener((changeInfo) => {
 // Clean up tab tracking when tabs close
 browser.tabs.onRemoved.addListener((tabId) => {
   lastPromptedPerTab.delete(tabId);
+  warmupTabIds.delete(tabId);
+  releasedTabs.delete(tabId);
 });
 
 /* =========================================================================
@@ -372,13 +226,22 @@ browser.tabs.onRemoved.addListener((tabId) => {
    ========================================================================= */
 
 function handleBeforeRequest(details) {
-  // 1. Skip non-main_frame requests
+  // Never intercept warmup tabs created by the extension
+  if (warmupTabIds.has(details.tabId)) return {};
+
+  // Work Item 2: One-shot release for tabs released by picker (prevents redirect loops)
+  if (details.tabId !== undefined && releasedTabs.has(details.tabId)) {
+    releasedTabs.delete(details.tabId);
+    return {};
+  }
+
+  // Skip non-main_frame requests
   if (details.type !== "main_frame") return {};
 
-  // 2. Skip incognito windows completely
+  // Skip incognito windows completely
   if (details.incognito) return {};
 
-  // 3. Parse target URL
+  // Parse target URL
   let targetUrl;
   try {
     targetUrl = new URL(details.url);
@@ -388,7 +251,7 @@ function handleBeforeRequest(details) {
 
   const hostname = targetUrl.hostname.toLowerCase();
 
-  // 4. Target host validation
+  // Target host validation
   if (hostname === "accounts.google.com") return {};
   if (!hostname.endsWith("youtube.com")) return {};
 
@@ -397,7 +260,7 @@ function handleBeforeRequest(details) {
     return {};
   }
 
-  // 5. Skip sensitive/action paths
+  // Skip sensitive/action paths
   const path = targetUrl.pathname.toLowerCase();
   if (
     path.startsWith("/signin") ||
@@ -407,12 +270,12 @@ function handleBeforeRequest(details) {
     return {};
   }
 
-  // 6. Skip if already has authuser parameter
+  // Skip if already has authuser parameter
   if (targetUrl.searchParams.has("authuser")) {
     return {};
   }
 
-  // 7. Loop / duplicate guard
+  // Loop & duplicate guard
   if (details.url.includes("picker/picker.html")) {
     return {};
   }
@@ -426,9 +289,9 @@ function handleBeforeRequest(details) {
     return {};
   }
 
-  // 8. Mode checks
+  // Mode checks
   if (cachedSettings.mode === "default_account") {
-    // Never prompt mode
+    // Mode 2: Never prompt
     return {};
   }
 
@@ -444,14 +307,13 @@ function handleBeforeRequest(details) {
   }
   // Mode "ask_every_time" falls through here to prompt
 
-  // 9. Account availability check
+  // Account count checks
   const isCacheFresh =
     accountCache.accounts && Date.now() - accountCache.timestamp < CACHE_TTL_MS;
 
   if (isCacheFresh) {
-    // Synchronous path
     if (accountCache.accounts.length <= 1) {
-      // 0 or 1 account signed in: pass through silently
+      // 0 or 1 account: pass through silently
       return {};
     }
 
@@ -462,41 +324,12 @@ function handleBeforeRequest(details) {
     return { redirectUrl: pickerUrl };
   }
 
-  // Cache is stale or uninitialized: resolve with max 300ms timeout
-  return new Promise((resolve) => {
-    let resolved = false;
-
-    const timer = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        resolve({}); // Fall through untouched after 300ms max
-      }
-    }, 300);
-
-    resolveAccounts()
-      .then((accounts) => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timer);
-
-        if (!accounts || accounts.length <= 1) {
-          resolve({});
-          return;
-        }
-
-        lastPromptedPerTab.set(details.tabId, details.url);
-        const pickerUrl = browser.runtime.getURL(
-          `picker/picker.html?target=${encodeURIComponent(details.url)}`,
-        );
-        resolve({ redirectUrl: pickerUrl });
-      })
-      .catch(() => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timer);
-        resolve({});
-      });
-  });
+  // Cold start or stale cache: open picker in same tab (picker executes cold-start path with 10s timeout)
+  lastPromptedPerTab.set(details.tabId, details.url);
+  const pickerUrl = browser.runtime.getURL(
+    `picker/picker.html?target=${encodeURIComponent(details.url)}`,
+  );
+  return { redirectUrl: pickerUrl };
 }
 
 browser.webRequest.onBeforeRequest.addListener(
@@ -509,28 +342,82 @@ browser.webRequest.onBeforeRequest.addListener(
 );
 
 /* =========================================================================
-   RUNTIME MESSAGES (PICKER / POPUP / OPTIONS)
+   RUNTIME MESSAGES (CONTENT / PICKER / POPUP / OPTIONS)
    ========================================================================= */
 
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return;
 
   switch (message.type) {
+    // Work Item 1: Stage logging forwarded from content.js
+    case "CONTENT_LOG": {
+      console.log(
+        `[BG] [YT Profile Picker] ${message.stage}:`,
+        message.detail || "",
+      );
+      break;
+    }
+
+    // Received from content.js after in-page enumeration
+    case "ACCOUNTS_UPDATED": {
+      const accounts = message.accounts || [];
+
+      // Work Item 5: Never cache empty or failed enumeration
+      if (accounts.length === 0) {
+        console.log(
+          "[BG] [YT Profile Picker] Ignoring empty accounts update; not caching.",
+        );
+        notifyAccountWaiters([]);
+        sendResponse({ success: false, reason: "Empty accounts list" });
+        break;
+      }
+
+      accountCache = {
+        accounts: accounts,
+        rawJson: message.rawJson || null,
+        timestamp: Date.now(),
+      };
+
+      browser.storage.local.set({
+        cachedAccounts: accountCache.accounts,
+        cacheTimestamp: accountCache.timestamp,
+        lastRawJson: accountCache.rawJson,
+      });
+
+      notifyAccountWaiters(accountCache.accounts);
+      sendResponse({ success: true });
+      break;
+    }
+
+    // Called by picker, popup, options
     case "GET_ACCOUNTS": {
-      resolveAccounts()
+      const isFresh =
+        accountCache.accounts !== null &&
+        accountCache.accounts.length > 0 &&
+        Date.now() - accountCache.timestamp < CACHE_TTL_MS;
+
+      if (isFresh) {
+        sendResponse({
+          accounts: accountCache.accounts,
+          rawJson: accountCache.rawJson,
+          timestamp: accountCache.timestamp,
+        });
+        return;
+      }
+
+      // Cold-start path: warm cache via background tab (up to 10s wait)
+      warmCacheViaBackgroundTab()
         .then((accounts) => {
           sendResponse({
-            accounts,
+            accounts: accounts || [],
             rawJson: accountCache.rawJson,
-            error: accountCache.error,
             timestamp: accountCache.timestamp,
           });
         })
-        .catch((err) => {
+        .catch(() => {
           sendResponse({
             accounts: accountCache.accounts || [],
             rawJson: accountCache.rawJson,
-            error: err.message,
             timestamp: accountCache.timestamp,
           });
         });
@@ -538,20 +425,19 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     case "FORCE_REFRESH_ACCOUNTS": {
-      resolveAccounts(true)
+      accountCache.timestamp = 0;
+      warmCacheViaBackgroundTab()
         .then((accounts) => {
           sendResponse({
-            accounts,
+            accounts: accounts || [],
             rawJson: accountCache.rawJson,
-            error: accountCache.error,
             timestamp: accountCache.timestamp,
           });
         })
-        .catch((err) => {
+        .catch(() => {
           sendResponse({
             accounts: [],
             rawJson: null,
-            error: err.message,
             timestamp: Date.now(),
           });
         });
@@ -563,7 +449,6 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         accounts: null,
         rawJson: null,
         timestamp: 0,
-        error: null,
       };
       browser.storage.local
         .remove(["cachedAccounts", "cacheTimestamp", "lastRawJson"])
@@ -573,12 +458,14 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
 
+    // Work Item 2: Release tab from webRequest interception for same-tab navigation
+    case "RELEASE_TAB":
     case "BYPASS_TARGET": {
+      if (message.tabId !== undefined && message.tabId !== null) {
+        releasedTabs.add(message.tabId);
+      }
       if (message.url) {
         bypassedTargets.add(message.url);
-      }
-      if (message.tabId !== undefined && message.url) {
-        lastPromptedPerTab.set(message.tabId, message.url);
       }
       sendResponse({ success: true });
       break;
@@ -610,38 +497,17 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ valid: false, reason: "No account specified" });
         break;
       }
-      // Re-resolve to detect index shift
-      resolveAccounts(true)
-        .then((freshAccounts) => {
-          if (!freshAccounts || freshAccounts.length === 0) {
-            sendResponse({ valid: false, reason: "No accounts returned" });
-            return;
-          }
 
-          const match = freshAccounts.find((a) => {
-            if (
-              chosen.email &&
-              a.email &&
-              chosen.email.toLowerCase() === a.email.toLowerCase()
-            ) {
-              return true;
-            }
-            if (chosen.name && a.name && chosen.name === a.name) {
-              return true;
-            }
-            return false;
-          });
+      // Check against cached accounts — match strictly by unique Gaia ID
+      const currentAccounts = accountCache.accounts || [];
+      const match = currentAccounts.find((a) => a.id === chosen.id);
 
-          if (!match) {
-            sendResponse({ valid: false, reason: "Account signed out" });
-          } else {
-            sendResponse({ valid: true, authuser: match.authuser });
-          }
-        })
-        .catch((err) => {
-          sendResponse({ valid: false, reason: err.message });
-        });
-      return true;
+      if (!match) {
+        sendResponse({ valid: false, reason: "Account not found in cache" });
+      } else {
+        sendResponse({ valid: true, authuser: match.authuser, name: match.name });
+      }
+      break;
     }
   }
 });
