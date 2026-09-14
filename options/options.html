@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>YT Profile Picker - Settings</title>
+        <link rel="stylesheet" href="options.css" />
+    </head>
+    <body>
+        <div class="options-container">
+            <header class="options-header">
+                <div class="header-logo-row">
+                    <svg
+                        class="yt-icon"
+                        viewBox="0 0 24 24"
+                        width="32"
+                        height="32"
+                    >
+                        <path
+                            fill="#FF0000"
+                            d="M21.58 7.19c-.23-.86-.91-1.54-1.77-1.77C18.25 5 12 5 12 5s-6.25 0-7.81.42c-.86.23-1.54.91-1.77 1.77C2 8.75 2 12 2 12s0 3.25.42 4.81c.23.86.91 1.54 1.77 1.77C5.75 19 12 19 12 19s6.25 0 7.81-.42c.86-.23 1.54-.91 1.77-1.77C22 15.25 22 12 22 12s0-3.25-.42-4.81z"
+                        />
+                        <polygon fill="#FFFFFF" points="10 15 15 12 10 9" />
+                    </svg>
+                    <h1>YT Profile Picker Settings</h1>
+                </div>
+                <p class="subtitle">
+                    Configure when and how profile prompts appear for
+                    multi-account YouTube.
+                </p>
+            </header>
+
+            <main class="settings-content">
+                <!-- Prompting Mode -->
+                <section class="settings-card">
+                    <h2>Prompting Behavior</h2>
+                    <div class="radio-group">
+                        <label class="radio-option">
+                            <input
+                                type="radio"
+                                name="picker-mode"
+                                value="ask_open"
+                                id="mode-ask-open"
+                            />
+                            <div class="option-details">
+                                <span class="option-title"
+                                    >Ask when I open YouTube (Default)</span
+                                >
+                                <span class="option-desc"
+                                    >Prompt only for new visits from the address
+                                    bar, external links, or bookmarks. In-site
+                                    clicks never prompt.</span
+                                >
+                            </div>
+                        </label>
+
+                        <label class="radio-option">
+                            <input
+                                type="radio"
+                                name="picker-mode"
+                                value="default_account"
+                                id="mode-default-account"
+                            />
+                            <div class="option-details">
+                                <span class="option-title"
+                                    >Always use default account</span
+                                >
+                                <span class="option-desc"
+                                    >Never prompt. YouTube opens seamlessly; use
+                                    the toolbar icon to switch accounts
+                                    manually.</span
+                                >
+                            </div>
+                        </label>
+
+                        <label class="radio-option">
+                            <input
+                                type="radio"
+                                name="picker-mode"
+                                value="ask_every_time"
+                                id="mode-ask-every"
+                            />
+                            <div class="option-details">
+                                <span class="option-title">Ask every time</span>
+                                <span class="option-desc"
+                                    >Prompt on internal YouTube navigations too.
+                                    <strong class="warning-note"
+                                        >Note: this mode is very chatty.</strong
+                                    ></span
+                                >
+                            </div>
+                        </label>
+                    </div>
+                </section>
+
+                <!-- Default Account & Integrations -->
+                <section class="settings-card">
+                    <h2>Preferences</h2>
+
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <label
+                                for="select-default-account"
+                                class="setting-title"
+                                >Default Account</label
+                            >
+                            <span class="setting-desc"
+                                >Used when prompting is disabled or when
+                                auto-selecting.</span
+                            >
+                        </div>
+                        <div class="setting-control">
+                            <select
+                                id="select-default-account"
+                                class="select-input"
+                            >
+                                <option value="0">
+                                    Account 1 (Default: authuser=0)
+                                </option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <label for="toggle-music" class="setting-title"
+                                >YouTube Music Support</label
+                            >
+                            <span class="setting-desc"
+                                >Enable account picker on
+                                music.youtube.com</span
+                            >
+                        </div>
+                        <div class="setting-control">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="toggle-music" />
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Cache Management -->
+                <section class="settings-card">
+                    <h2>Account Cache</h2>
+                    <p class="setting-desc" style="margin-bottom: 14px">
+                        Accounts are automatically discovered from YouTube
+                        InnerTube and cached for 10 minutes.
+                    </p>
+                    <div class="cache-status-row">
+                        <span id="cache-status-text"
+                            >Loading cache status...</span
+                        >
+                        <button
+                            type="button"
+                            class="btn btn-secondary"
+                            id="btn-clear-cache"
+                        >
+                            Clear & Refresh Accounts
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Debug Section -->
+                <section class="settings-card debug-card">
+                    <div class="debug-header">
+                        <div>
+                            <h2>Debug & Diagnostics</h2>
+                            <span class="setting-desc"
+                                >Inspect the raw response from YouTube's
+                                accounts_list endpoint for parser
+                                maintenance.</span
+                            >
+                        </div>
+                        <div class="debug-actions">
+                            <button
+                                type="button"
+                                class="btn btn-secondary"
+                                id="btn-copy-json"
+                            >
+                                Copy JSON
+                            </button>
+                            <button
+                                type="button"
+                                class="btn btn-primary"
+                                id="btn-inspect-json"
+                            >
+                                Inspect Raw JSON
+                            </button>
+                        </div>
+                    </div>
+                    <div
+                        id="debug-json-container"
+                        class="debug-pre-wrapper hidden"
+                    >
+                        <pre id="debug-raw-json">
+No raw data available yet. Click "Inspect Raw JSON" to fetch.</pre>
+                    </div>
+                </section>
+            </main>
+
+            <!-- Notification Toast -->
+            <div id="toast" class="toast hidden">Saved</div>
+        </div>
+
+        <script src="options.js"></script>
+    </body>
+</html>

@@ -1,0 +1,50 @@
+{
+  "manifest_version": 2,
+  "name": "YT Profile Picker",
+  "version": "1.0.0",
+  "description": "Netflix-style profile picker for multi-account YouTube.",
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "storage",
+    "tabs",
+    "cookies",
+    "*://*.youtube.com/*",
+    "*://*.google.com/*"
+  ],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "browser_action": {
+    "default_title": "YT Profile Picker",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "web_accessible_resources": [
+    "picker/picker.html",
+    "picker/picker.css",
+    "picker/picker.js"
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "yt-profile-picker@oshank.dev",
+      "strict_min_version": "91.0"
+    }
+  }
+}

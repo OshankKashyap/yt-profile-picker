@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Who's watching? - YouTube</title>
+        <link rel="stylesheet" href="picker.css" />
+    </head>
+    <body>
+        <div class="picker-container">
+            <div
+                class="picker-card"
+                id="picker-card"
+                role="dialog"
+                aria-labelledby="picker-title"
+            >
+                <header class="picker-header">
+                    <div class="logo-container">
+                        <svg
+                            class="yt-icon"
+                            viewBox="0 0 24 24"
+                            width="36"
+                            height="36"
+                        >
+                            <path
+                                fill="#FF0000"
+                                d="M21.58 7.19c-.23-.86-.91-1.54-1.77-1.77C18.25 5 12 5 12 5s-6.25 0-7.81.42c-.86.23-1.54.91-1.77 1.77C2 8.75 2 12 2 12s0 3.25.42 4.81c.23.86.91 1.54 1.77 1.77C5.75 19 12 19 12 19s6.25 0 7.81-.42c.86-.23 1.54-.91 1.77-1.77C22 15.25 22 12 22 12s0-3.25-.42-4.81z"
+                            />
+                            <polygon fill="#FFFFFF" points="10 15 15 12 10 9" />
+                        </svg>
+                    </div>
+                    <h1 id="picker-title">Who's watching?</h1>
+                    <p class="picker-subtitle">
+                        Select an account to load YouTube
+                    </p>
+                </header>
+
+                <!-- Account List -->
+                <div
+                    class="profile-list"
+                    id="profile-list"
+                    role="listbox"
+                    aria-label="YouTube Accounts"
+                >
+                    <!-- Rendered dynamically -->
+                </div>
+
+                <!-- Error / Fallback State -->
+                <div class="error-container hidden" id="error-container">
+                    <p class="error-text" id="error-text">
+                        Couldn't load accounts from YouTube.
+                    </p>
+                    <button
+                        type="button"
+                        class="btn btn-primary"
+                        id="btn-fallback"
+                    >
+                        Continue with current account
+                    </button>
+                </div>
+
+                <!-- Footer -->
+                <footer class="picker-footer">
+                    <button
+                        type="button"
+                        class="btn-cancel"
+                        id="btn-cancel"
+                        title="Cancel and open target untouched (Esc)"
+                    >
+                        Continue without switching
+                        <span class="shortcut-tag">Esc</span>
+                    </button>
+                    <div class="footer-links">
+                        <a
+                            href="#"
+                            class="options-link"
+                            id="link-options"
+                            title="Open Settings"
+                        >
+                            <svg
+                                viewBox="0 0 24 24"
+                                width="16"
+                                height="16"
+                                fill="currentColor"
+                            >
+                                <path
+                                    d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
+                                />
+                            </svg>
+                            Settings
+                        </a>
+                    </div>
+                </footer>
+            </div>
+        </div>
+
+        <script src="picker.js"></script>
+    </body>
+</html>
