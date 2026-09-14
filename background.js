@@ -39,6 +39,9 @@ const releasedTabs = new Set();
 // IDs of background warmup tabs to prevent interception loops
 const warmupTabIds = new Set();
 
+// Tab IDs currently undergoing Google sign-in (tabId -> suppression expiry Date.now() + ms)
+const signInTabIds = new Map();
+
 // Callbacks waiting for account enumeration (cold-start path)
 const accountWaiters = [];
 
@@ -219,6 +222,7 @@ browser.tabs.onRemoved.addListener((tabId) => {
   lastPromptedPerTab.delete(tabId);
   warmupTabIds.delete(tabId);
   releasedTabs.delete(tabId);
+  signInTabIds.delete(tabId);
 });
 
 /* =========================================================================
@@ -252,21 +256,53 @@ function handleBeforeRequest(details) {
   const hostname = targetUrl.hostname.toLowerCase();
 
   // Target host validation
-  if (hostname === "accounts.google.com") return {};
-  if (!hostname.endsWith("youtube.com")) return {};
+  if (hostname === "accounts.google.com") {
+    if (details.tabId !== undefined && details.tabId >= 0) {
+      signInTabIds.set(details.tabId, Date.now() + 90_000);
+    }
+    return {};
+  }
+
+  // Early return for any non-youtube.com host
+  if (!hostname.endsWith("youtube.com")) {
+    return {};
+  }
+
+  // Sign-in suppression window check on youtube.com
+  if (details.tabId !== undefined && signInTabIds.has(details.tabId)) {
+    const expiry = signInTabIds.get(details.tabId);
+    if (Date.now() < expiry) {
+      console.log(
+        "[YT Profile Picker] Skipping interception for sign-in flow",
+        details.url,
+      );
+      return {};
+    } else {
+      signInTabIds.delete(details.tabId);
+    }
+  }
 
   // Music toggle check
   if (hostname === "music.youtube.com" && !cachedSettings.enableMusic) {
     return {};
   }
 
-  // Skip sensitive/action paths
+  // URL-pattern skip (case-insensitive)
   const path = targetUrl.pathname.toLowerCase();
+  const search = targetUrl.search.toLowerCase();
   if (
     path.startsWith("/signin") ||
-    path.startsWith("/logout") ||
-    path.startsWith("/upload")
+    search.includes("action_handle_signin=true") ||
+    search.includes("feature=redirect_login")
   ) {
+    console.log(
+      "[YT Profile Picker] Skipping interception for sign-in flow",
+      details.url,
+    );
+    return {};
+  }
+
+  if (path.startsWith("/logout") || path.startsWith("/upload")) {
     return {};
   }
 
@@ -335,7 +371,7 @@ function handleBeforeRequest(details) {
 browser.webRequest.onBeforeRequest.addListener(
   handleBeforeRequest,
   {
-    urls: ["*://*.youtube.com/*"],
+    urls: ["*://*.youtube.com/*", "*://*.google.com/*"],
     types: ["main_frame"],
   },
   ["blocking"],
@@ -505,7 +541,11 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!match) {
         sendResponse({ valid: false, reason: "Account not found in cache" });
       } else {
-        sendResponse({ valid: true, authuser: match.authuser, name: match.name });
+        sendResponse({
+          valid: true,
+          authuser: match.authuser,
+          name: match.name,
+        });
       }
       break;
     }
