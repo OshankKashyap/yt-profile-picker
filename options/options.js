@@ -6,6 +6,12 @@
   "use strict";
 
   const modeRadios = document.querySelectorAll('input[name="picker-mode"]');
+  const refreshModeRadios = document.querySelectorAll(
+    'input[name="refresh-mode"]',
+  );
+  const selectRefreshInterval = document.getElementById(
+    "select-refresh-interval",
+  );
   const selectDefaultAccount = document.getElementById(
     "select-default-account",
   );
@@ -73,6 +79,17 @@
     });
   }
 
+  function selectedRefreshMode() {
+    return (
+      document.querySelector('input[name="refresh-mode"]:checked')?.value ||
+      "automatic"
+    );
+  }
+
+  function updateRefreshControls() {
+    selectRefreshInterval.disabled = selectedRefreshMode() === "manual";
+  }
+
   async function saveCurrentSettings() {
     let selectedMode = "ask_open";
     modeRadios.forEach((r) => {
@@ -85,6 +102,10 @@
     currentSettings.mode = selectedMode;
     currentSettings.defaultAccountIndex = defaultIdx;
     currentSettings.enableMusic = enableMusic;
+    currentSettings.refreshMode = selectedRefreshMode();
+    currentSettings.refreshIntervalMinutes = Number(selectRefreshInterval.value);
+
+    updateRefreshControls();
 
     await browser.runtime.sendMessage({
       type: "SAVE_SETTINGS",
@@ -112,6 +133,15 @@
         r.checked = r.value === currentSettings.mode;
       });
 
+      refreshModeRadios.forEach((r) => {
+        r.checked = r.value === (currentSettings.refreshMode || "automatic");
+      });
+      const interval = Number(currentSettings.refreshIntervalMinutes);
+      selectRefreshInterval.value = [10, 15, 20, 30, 45, 60].includes(interval)
+        ? String(interval)
+        : "10";
+      updateRefreshControls();
+
       // Set Music Toggle
       toggleMusic.checked = Boolean(currentSettings.enableMusic !== false);
 
@@ -136,8 +166,12 @@
 
   selectDefaultAccount.addEventListener("change", saveCurrentSettings);
   toggleMusic.addEventListener("change", saveCurrentSettings);
+  refreshModeRadios.forEach((r) => {
+    r.addEventListener("change", saveCurrentSettings);
+  });
+  selectRefreshInterval.addEventListener("change", saveCurrentSettings);
 
-  // Clear & Refresh accounts
+  // Refresh accounts
   btnClearCache.addEventListener("click", async () => {
     cacheStatusText.textContent =
       "Refreshing accounts from YouTube InnerTube...";
@@ -146,12 +180,17 @@
         type: "FORCE_REFRESH_ACCOUNTS",
       });
       const accounts = (res && res.accounts) || [];
+      if (!res || !res.refreshed) {
+        updateCacheDisplay(accounts, res && res.timestamp);
+        showToast("Refresh failed; showing cached accounts");
+        return;
+      }
       populateAccountsDropdown(accounts, currentSettings.defaultAccountIndex);
       updateCacheDisplay(accounts, res && res.timestamp);
       currentRawJson = (res && res.rawJson) || null;
-      if (currentRawJson) {
-        debugRawJson.textContent = JSON.stringify(currentRawJson, null, 2);
-      }
+      debugRawJson.textContent = currentRawJson
+        ? JSON.stringify(currentRawJson, null, 2)
+        : "No raw account data available.";
       showToast(`Refreshed (${accounts.length} found)`);
     } catch (err) {
       cacheStatusText.textContent = "Refresh failed.";

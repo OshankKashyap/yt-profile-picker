@@ -1,13 +1,14 @@
 {
   "manifest_version": 2,
   "name": "YT Profile Picker",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Netflix-style profile picker for multi-account YouTube.",
   "permissions": [
     "webRequest",
     "webRequestBlocking",
     "storage",
     "tabs",
+    "alarms",
     "cookies",
     "*://*.youtube.com/*",
     "*://*.google.com/*"

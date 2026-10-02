@@ -13,9 +13,9 @@ Raw InnerTube calls from extension background contexts, `curl`, or sandboxes tri
    - Derives `SAPISIDHASH` Authorization from the session `SAPISID` cookie in `document.cookie`.
    - Executes a same-origin `fetch("/youtubei/v1/account/accounts_list?prettyPrint=false")` with credentials `"include"` and native YouTube client headers (`X-Goog-Visitor-Id`, `X-Youtube-Client-Name: 1`, `X-Youtube-Client-Version`).
    - Treats any HTML response (`<title>Sorry...`) as graceful failure.
-2. **Background Cache (`background.js`)**: Caches discovered accounts with a 10-minute TTL. The picker **always** reads from this cache and never calls InnerTube itself.
-3. **Automatic Refresh**: Normal browsing keeps the cache warm; `content.js` re-enumerates at most once per tab per 10 minutes.
-4. **Cold-Start Path**: If the picker opens with no cached accounts, `background.js` opens a temporary background tab to `youtube.com` and waits up to 5 seconds for `content.js` to report accounts. On timeout, it falls back to "Continue with current account", never blocking navigation.
+2. **Background Cache (`background.js`)**: Caches discovered accounts. The picker **always** reads from this cache and never calls InnerTube itself.
+3. **Refresh Options**: Automatic background checks can run every 10, 15, 20, 30, 45, or 60 minutes. Manual mode stops scheduled checks, and the picker has a **Refresh profiles** button to check for added or removed profiles on demand. Normal YouTube browsing can also update the cache.
+4. **Cold-Start Path**: If the picker opens with no cached accounts, `background.js` opens a temporary background tab to `youtube.com` and waits up to 10 seconds for `content.js` to report accounts. On timeout, it falls back to "Continue with current account", never blocking navigation.
 
 ---
 
@@ -27,6 +27,7 @@ Raw InnerTube calls from extension background contexts, `curl`, or sandboxes tri
 - **Keyboard First**: Direct selection with number keys (`1`–`4`), arrow navigation (`↑`/`↓`/`←`/`→`), `Enter` to confirm, and `Esc` to cancel and proceed untouched.
 - **Badges**: Shows "Last used" and "Current" badges on your profiles.
 - **Toolbar Quick-Switcher**: Popup allows one-click opening of YouTube under any account in a new tab.
+- **Profile Refresh**: Choose an automatic interval up to one hour or turn off scheduled checks. Refresh profiles directly from the picker whenever needed.
 - **Configurable Modes**:
   1. _Ask when I open YouTube_ (Default): Prompts only for top-level visits (address bar, bookmarks, external links). In-site clicks never prompt.
   2. _Always use default account_: Never prompts. YouTube loads directly; use popup for manual switching.
@@ -74,6 +75,8 @@ Raw InnerTube calls from extension background contexts, `curl`, or sandboxes tri
 
 - [ ] **Initial Visit Prompt**: Type `youtube.com` into the address bar and press Enter. The "Who's watching?" profile picker appears in the same tab showing your accounts.
 - [ ] **Cold-Start Warmup**: If cache is empty, the picker displays "Finding accounts..." while the background warmup tab enumerates, then immediately reveals your profiles.
+- [ ] **Automatic Interval**: In Settings, choose a longer refresh interval and confirm profiles remain available from the cache between checks.
+- [ ] **Manual Refresh**: On the picker, click **Refresh profiles** after adding or removing an account. The list updates and reports how many profiles changed.
 - [ ] **Keyboard Selection (1–4)**: Press `1` or `2` on your keyboard. YouTube immediately loads under that account (`authuser=0` or `authuser=1`).
 - [ ] **Arrow Keys & Enter**: Navigate again to `youtube.com`. Use `Arrow Down` / `Arrow Up` to focus an account card, then press `Enter`.
 - [ ] **Cancel / Untouched Navigation**: Navigate to `youtube.com`. Press `Esc` or click "Continue without switching". The page opens untouched under your default account without re-prompting.

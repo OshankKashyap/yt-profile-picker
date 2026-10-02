@@ -217,7 +217,14 @@
     stageLog("SAPISID present", sapisidPresent);
 
     if (!sapisid) {
-      // User not signed into Google in this profile - do not cache empty
+      // A missing auth cookie confirms there are no signed-in profiles.
+      browser.runtime
+        .sendMessage({
+          type: "ACCOUNTS_UPDATED",
+          accounts: [],
+          verifiedEmpty: true,
+        })
+        .catch(() => {});
       return;
     }
 

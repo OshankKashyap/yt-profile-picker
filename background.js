@@ -3,18 +3,22 @@
  *
  * Anti-Bot Compliant Architecture:
  * - NEVER sends raw youtubei requests from background/curl (avoids Google anti-bot HTML blocks).
- * - Relies entirely on in-page content.js enumeration and maintains a 10-minute cache.
+ * - Relies entirely on in-page content.js enumeration and maintains a configurable cache.
  * - Handles cold-start path via temporary background tab with a 10s timeout and race-free about:blank creation.
  * - Blocking webRequest listener with one-shot releasedTabs tracking to prevent redirect loops.
  */
 
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache validity
+const REFRESH_LEAD_MS = 30 * 1000; // Finish the background fetch before expiry
+const REFRESH_ALARM = "refresh-accounts";
+const REFRESH_INTERVALS = [10, 15, 20, 30, 45, 60];
 
 const DEFAULT_SETTINGS = {
   mode: "ask_open", // "ask_open" (default) | "default_account" | "ask_every_time"
   defaultAccountIndex: 0,
   enableMusic: true,
   lastUsedAccount: null,
+  refreshMode: "automatic", // "automatic" | "manual"
+  refreshIntervalMinutes: 10,
 };
 
 // In-memory cache for fast, synchronous webRequest checks
@@ -44,6 +48,53 @@ const signInTabIds = new Map();
 
 // Callbacks waiting for account enumeration (cold-start path)
 const accountWaiters = [];
+let warmupPromise = null;
+let cacheRevision = 0;
+
+function refreshIntervalMs() {
+  const minutes = Number(cachedSettings.refreshIntervalMinutes);
+  return (REFRESH_INTERVALS.includes(minutes) ? minutes : 10) * 60_000;
+}
+
+function isAutomaticRefresh() {
+  return cachedSettings.refreshMode !== "manual";
+}
+
+function isCacheUsable() {
+  return (
+    accountCache.accounts !== null &&
+    accountCache.timestamp > 0 &&
+    (!isAutomaticRefresh() ||
+      Date.now() - accountCache.timestamp < refreshIntervalMs())
+  );
+}
+
+function scheduleBackgroundRefresh() {
+  if (!isAutomaticRefresh()) {
+    browser.alarms.clear(REFRESH_ALARM).catch((err) => {
+      console.warn("[YT Profile Picker] Could not clear background refresh:", err);
+    });
+    return;
+  }
+
+  const intervalMs = refreshIntervalMs();
+  const isFresh =
+    accountCache.accounts !== null &&
+    accountCache.timestamp > 0 &&
+    Date.now() - accountCache.timestamp < intervalMs - REFRESH_LEAD_MS;
+  const when = isFresh
+    ? accountCache.timestamp + intervalMs - REFRESH_LEAD_MS
+    : Date.now() + intervalMs;
+
+  browser.alarms
+    .create(REFRESH_ALARM, {
+      when,
+      periodInMinutes: intervalMs / 60_000,
+    })
+    .catch((err) => {
+      console.warn("[YT Profile Picker] Could not schedule background refresh:", err);
+    });
+}
 
 function notifyAccountWaiters(accounts) {
   while (accountWaiters.length > 0) {
@@ -70,13 +121,31 @@ async function loadSettings() {
 }
 
 async function saveSettings(newSettings) {
-  cachedSettings = { ...cachedSettings, ...newSettings };
+  applySettings({ ...cachedSettings, ...newSettings });
   await browser.storage.local.set({ settings: cachedSettings });
+}
+
+function applySettings(settings) {
+  const previousMode = cachedSettings.refreshMode;
+  const previousInterval = refreshIntervalMs();
+  cachedSettings = { ...DEFAULT_SETTINGS, ...settings };
+
+  if (
+    cachedSettings.refreshMode !== previousMode ||
+    refreshIntervalMs() !== previousInterval
+  ) {
+    scheduleBackgroundRefresh();
+    if (isAutomaticRefresh() && !isCacheUsable()) {
+      warmCacheViaBackgroundTab().catch((err) => {
+        console.warn("[YT Profile Picker] Background refresh failed:", err);
+      });
+    }
+  }
 }
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.settings) {
-    cachedSettings = { ...DEFAULT_SETTINGS, ...changes.settings.newValue };
+    applySettings(changes.settings.newValue);
   }
 });
 
@@ -84,11 +153,21 @@ browser.storage.onChanged.addListener((changes, area) => {
    COLD-START ENUMERATION VIA BACKGROUND TAB (RACE-FREE & 10S WAIT)
    ========================================================================= */
 
-async function warmCacheViaBackgroundTab() {
+function warmCacheViaBackgroundTab() {
+  if (!warmupPromise) {
+    warmupPromise = runWarmCacheViaBackgroundTab().finally(() => {
+      warmupPromise = null;
+    });
+  }
+  return warmupPromise;
+}
+
+async function runWarmCacheViaBackgroundTab() {
   // If an existing YouTube tab is already open, ask it to enumerate
   try {
     const existingTabs = await browser.tabs.query({
       url: "*://*.youtube.com/*",
+      incognito: false,
     });
     const realTab = existingTabs.find((t) => !warmupTabIds.has(t.id));
     if (realTab && realTab.id) {
@@ -116,9 +195,14 @@ async function warmCacheViaBackgroundTab() {
   // Create tab with about:blank, add ID to warmupTabIds BEFORE navigating to youtube
   let warmupTab = null;
   try {
+    const windows = await browser.windows.getAll({ windowTypes: ["normal"] });
+    const normalWindow = windows.find((window) => !window.incognito);
+    if (!normalWindow) return accountCache.accounts || [];
+
     warmupTab = await browser.tabs.create({
       url: "about:blank",
       active: false,
+      windowId: normalWindow.id,
     });
     warmupTabIds.add(warmupTab.id);
     await browser.tabs.update(warmupTab.id, {
@@ -182,11 +266,7 @@ async function init() {
       "cacheTimestamp",
       "lastRawJson",
     ]);
-    if (
-      data.cachedAccounts &&
-      data.cachedAccounts.length > 0 &&
-      data.cacheTimestamp
-    ) {
+    if (Array.isArray(data.cachedAccounts) && data.cacheTimestamp) {
       accountCache.accounts = data.cachedAccounts;
       accountCache.timestamp = data.cacheTimestamp;
       accountCache.rawJson = data.lastRawJson || null;
@@ -194,9 +274,28 @@ async function init() {
   } catch (err) {
     console.warn("[YT Profile Picker] Init error:", err);
   }
+
+  const needsRefresh =
+    isAutomaticRefresh() &&
+    (accountCache.accounts === null ||
+      Date.now() - accountCache.timestamp >=
+        refreshIntervalMs() - REFRESH_LEAD_MS);
+  scheduleBackgroundRefresh();
+  if (needsRefresh) {
+    warmCacheViaBackgroundTab().catch((err) => {
+      console.warn("[YT Profile Picker] Background refresh failed:", err);
+    });
+  }
 }
 
 init();
+
+browser.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== REFRESH_ALARM || !isAutomaticRefresh()) return;
+  warmCacheViaBackgroundTab().catch((err) => {
+    console.warn("[YT Profile Picker] Background refresh failed:", err);
+  });
+});
 
 // Invalidate cache when Google/YouTube auth cookies change
 browser.cookies.onChanged.addListener((changeInfo) => {
@@ -344,8 +443,7 @@ function handleBeforeRequest(details) {
   // Mode "ask_every_time" falls through here to prompt
 
   // Account count checks
-  const isCacheFresh =
-    accountCache.accounts && Date.now() - accountCache.timestamp < CACHE_TTL_MS;
+  const isCacheFresh = isCacheUsable();
 
   if (isCacheFresh) {
     if (accountCache.accounts.length <= 1) {
@@ -398,8 +496,8 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case "ACCOUNTS_UPDATED": {
       const accounts = message.accounts || [];
 
-      // Work Item 5: Never cache empty or failed enumeration
-      if (accounts.length === 0) {
+      // Never replace a known cache with an unverified empty parser result.
+      if (accounts.length === 0 && !message.verifiedEmpty) {
         console.log(
           "[BG] [YT Profile Picker] Ignoring empty accounts update; not caching.",
         );
@@ -413,12 +511,15 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         rawJson: message.rawJson || null,
         timestamp: Date.now(),
       };
+      cacheRevision++;
 
       browser.storage.local.set({
         cachedAccounts: accountCache.accounts,
         cacheTimestamp: accountCache.timestamp,
         lastRawJson: accountCache.rawJson,
       });
+
+      scheduleBackgroundRefresh();
 
       notifyAccountWaiters(accountCache.accounts);
       sendResponse({ success: true });
@@ -427,10 +528,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     // Called by picker, popup, options
     case "GET_ACCOUNTS": {
-      const isFresh =
-        accountCache.accounts !== null &&
-        accountCache.accounts.length > 0 &&
-        Date.now() - accountCache.timestamp < CACHE_TTL_MS;
+      const isFresh = isCacheUsable();
 
       if (isFresh) {
         sendResponse({
@@ -461,20 +559,22 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     case "FORCE_REFRESH_ACCOUNTS": {
-      accountCache.timestamp = 0;
+      const revisionBeforeRefresh = cacheRevision;
       warmCacheViaBackgroundTab()
-        .then((accounts) => {
+        .then(() => {
           sendResponse({
-            accounts: accounts || [],
+            accounts: accountCache.accounts || [],
             rawJson: accountCache.rawJson,
             timestamp: accountCache.timestamp,
+            refreshed: cacheRevision > revisionBeforeRefresh,
           });
         })
         .catch(() => {
           sendResponse({
-            accounts: [],
-            rawJson: null,
-            timestamp: Date.now(),
+            accounts: accountCache.accounts || [],
+            rawJson: accountCache.rawJson,
+            timestamp: accountCache.timestamp,
+            refreshed: false,
           });
         });
       return true;

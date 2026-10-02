@@ -328,6 +328,17 @@ body {
     text-align: center;
 }
 
+.refresh-status {
+    margin-top: 12px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    text-align: center;
+}
+
+.refresh-status:empty {
+    display: none;
+}
+
 .btn {
     display: inline-flex;
     align-items: center;
@@ -359,6 +370,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 .btn-cancel {
@@ -393,6 +406,28 @@ body {
 .footer-links {
     display: flex;
     align-items: center;
+    gap: 8px;
+}
+
+.btn-refresh {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 6px 8px;
+    border-radius: 6px;
+}
+
+.btn-refresh:hover:not(:disabled),
+.btn-refresh:focus-visible {
+    color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.06);
+}
+
+.btn-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
 }
 
 .options-link {

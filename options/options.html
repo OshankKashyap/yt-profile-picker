@@ -144,9 +144,59 @@
                 <section class="settings-card">
                     <h2>Account Cache</h2>
                     <p class="setting-desc" style="margin-bottom: 14px">
-                        Accounts are automatically discovered from YouTube
-                        InnerTube and cached for 10 minutes.
+                        Choose how often profiles are checked in the background.
+                        You can refresh them on the profile picker at any time.
                     </p>
+                    <div class="radio-group refresh-mode-group">
+                        <label class="radio-option">
+                            <input
+                                type="radio"
+                                name="refresh-mode"
+                                value="automatic"
+                                id="refresh-automatic"
+                            />
+                            <div class="option-details">
+                                <span class="option-title">Automatic refresh</span>
+                                <span class="option-desc"
+                                    >Check profiles in the background at the
+                                    selected interval.</span
+                                >
+                            </div>
+                        </label>
+                        <label class="radio-option">
+                            <input
+                                type="radio"
+                                name="refresh-mode"
+                                value="manual"
+                                id="refresh-manual"
+                            />
+                            <div class="option-details">
+                                <span class="option-title">Refresh on demand</span>
+                                <span class="option-desc"
+                                    >Stop scheduled checks. Browsing YouTube
+                                    can still update profiles; use Refresh
+                                    profiles on the picker to check now.</span
+                                >
+                            </div>
+                        </label>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <label for="select-refresh-interval" class="setting-title"
+                                >Automatic interval</label
+                            >
+                        </div>
+                        <div class="setting-control">
+                            <select id="select-refresh-interval" class="select-input">
+                                <option value="10">10 minutes</option>
+                                <option value="15">15 minutes</option>
+                                <option value="20">20 minutes</option>
+                                <option value="30">30 minutes</option>
+                                <option value="45">45 minutes</option>
+                                <option value="60">1 hour</option>
+                            </select>
+                        </div>
+                    </div>
                     <div class="cache-status-row">
                         <span id="cache-status-text"
                             >Loading cache status...</span
@@ -156,7 +206,7 @@
                             class="btn btn-secondary"
                             id="btn-clear-cache"
                         >
-                            Clear & Refresh Accounts
+                            Refresh Accounts
                         </button>
                     </div>
                 </section>

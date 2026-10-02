@@ -24,6 +24,7 @@
   let accountsList = [];
   let focusedIndex = 0;
   let settings = {};
+  let isRefreshing = false;
 
   const loadingStateEl = document.getElementById("loading-state");
   const profileListEl = document.getElementById("profile-list");
@@ -31,6 +32,8 @@
   const errorTextEl = document.getElementById("error-text");
   const btnFallbackEl = document.getElementById("btn-fallback");
   const btnCancelEl = document.getElementById("btn-cancel");
+  const btnRefreshEl = document.getElementById("btn-refresh");
+  const refreshStatusEl = document.getElementById("refresh-status");
   const linkOptionsEl = document.getElementById("link-options");
 
   function getColorForString(str) {
@@ -81,7 +84,7 @@
   }
 
   async function selectAccount(account) {
-    if (!account) return;
+    if (!account || isRefreshing) return;
 
     const tabId = await getCurrentTabId();
 
@@ -267,6 +270,50 @@
     });
   }
 
+  async function refreshProfiles() {
+    if (isRefreshing) return;
+    isRefreshing = true;
+    btnRefreshEl.disabled = true;
+    refreshStatusEl.textContent = "Checking profiles...";
+
+    try {
+      const response = await browser.runtime.sendMessage({
+        type: "FORCE_REFRESH_ACCOUNTS",
+      });
+      if (!response || !response.refreshed) {
+        refreshStatusEl.textContent =
+          "Could not refresh profiles. Your current list is unchanged.";
+        return;
+      }
+
+      const nextAccounts = response.accounts || [];
+      const oldIds = new Set(accountsList.map((account) => account.id));
+      const newIds = new Set(nextAccounts.map((account) => account.id));
+      const added = nextAccounts.filter((account) => !oldIds.has(account.id));
+      const removed = accountsList.filter((account) => !newIds.has(account.id));
+
+      accountsList = nextAccounts;
+      if (accountsList.length > 1) {
+        renderAccounts(accountsList, settings.lastUsedAccount);
+      } else if (accountsList.length === 1) {
+        showErrorState("Only one signed-in profile remains.");
+      } else {
+        showErrorState("No signed-in profiles found.");
+      }
+
+      refreshStatusEl.textContent = added.length || removed.length
+        ? `${added.length} added, ${removed.length} removed.`
+        : "Profiles are up to date.";
+    } catch (err) {
+      console.warn("[YT Profile Picker] Manual refresh failed:", err);
+      refreshStatusEl.textContent =
+        "Could not refresh profiles. Your current list is unchanged.";
+    } finally {
+      isRefreshing = false;
+      btnRefreshEl.disabled = false;
+    }
+  }
+
   // Keyboard navigation & shortcuts
   document.addEventListener("keydown", (e) => {
     // Escape cancels and continues untouched
@@ -331,6 +378,7 @@
   // Event Listeners
   btnFallbackEl.addEventListener("click", continueUntouched);
   btnCancelEl.addEventListener("click", continueUntouched);
+  btnRefreshEl.addEventListener("click", refreshProfiles);
 
   linkOptionsEl.addEventListener("click", (e) => {
     e.preventDefault();
@@ -372,6 +420,8 @@
     } catch (err) {
       console.warn("[YT Profile Picker] Error during picker init:", err);
       showErrorState("Could not communicate with background service.");
+    } finally {
+      btnRefreshEl.disabled = false;
     }
   }
 

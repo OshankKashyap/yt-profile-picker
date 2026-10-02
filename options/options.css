@@ -90,6 +90,10 @@ body {
     gap: 14px;
 }
 
+.refresh-mode-group {
+    margin-bottom: 14px;
+}
+
 .radio-option {
     display: flex;
     align-items: flex-start;
@@ -179,6 +183,11 @@ body {
 
 .select-input:focus {
     border-color: var(--accent-red);
+}
+
+.select-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 /* Toggle Switch */

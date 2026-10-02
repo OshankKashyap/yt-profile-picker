@@ -65,6 +65,8 @@
                     </button>
                 </div>
 
+                <p class="refresh-status" id="refresh-status" role="status" aria-live="polite"></p>
+
                 <!-- Footer -->
                 <footer class="picker-footer">
                     <button
@@ -77,6 +79,15 @@
                         <span class="shortcut-tag">Esc</span>
                     </button>
                     <div class="footer-links">
+                        <button
+                            type="button"
+                            class="btn-refresh"
+                            id="btn-refresh"
+                            title="Check for added or removed profiles"
+                            disabled
+                        >
+                            Refresh profiles
+                        </button>
                         <a
                             href="#"
                             class="options-link"
