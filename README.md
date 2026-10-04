@@ -1,5 +1,9 @@
 # YT Profile Picker
 
+<p align="center">
+  <img src="logos/logo.svg" alt="YT Profile Picker logo" width="96" height="96">
+</p>
+
 A lightweight Firefox WebExtension (Manifest V2) that provides a Netflix-style profile picker when navigating to YouTube or YouTube Music. It lets you choose which signed-in Google account should watch, then seamlessly loads the page under that account via URL rewriting (`authuser=N`). Zero containers, zero cookie swapping, instant UX.
 
 ---
@@ -108,11 +112,15 @@ yt-profile-picker/
 │   ├── options.html           # Settings & Diagnostics interface
 │   ├── options.css            # Settings styling and JSON pre viewer
 │   └── options.js             # Mode settings, cache clearing, raw JSON inspector
+├── logos/
+│   └── logo.svg               # Master vector logo (512 viewBox, source of all PNG exports)
 ├── icons/
-│   ├── icon-16.png            # 16x16 icon
-│   ├── icon-32.png            # 32x32 icon
-│   ├── icon-48.png            # 48x48 icon
-│   └── icon-128.png           # 128x128 icon
+│   ├── icon-16.png            # 16x16 toolbar icon
+│   ├── icon-32.png            # 32x32 toolbar icon
+│   ├── icon-48.png            # 48x48 addon manager icon
+│   ├── icon-96.png            # 96x96 addon manager icon
+│   ├── icon-128.png           # 128x128 store/icon icon
+│   └── icon-512.png           # 512x512 high-res master (AMO / README)
 └── README.md                  # Documentation and testing guide
 ```
 

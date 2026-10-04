@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="YT Profile Picker">
+  <title>YT Profile Picker</title>
+  <defs>
+    <!-- One account: head + shoulders silhouette, rounded lower corners -->
+    <g id="account">
+      <circle cx="196" cy="176" r="64"/>
+      <path d="M64 364a132 132 0 0 1 264 0v70a30 30 0 0 1-30 30H94a30 30 0 0 1-30-30Z"/>
+    </g>
+  </defs>
+
+  <!-- Tile -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="#2BA6A6"/>
+
+  <!-- Rear account -->
+  <use xlink:href="#account" href="#account" fill="#0F5C61" transform="translate(118 -24)"/>
+
+  <!-- Front account -->
+  <use xlink:href="#account" href="#account" fill="#FFFFFF"/>
+</svg>
