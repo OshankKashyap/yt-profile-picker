@@ -1,5 +1,7 @@
 # YT Profile Picker
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.txt)
+
 <p align="center">
   <img src="logos/logo.svg" alt="YT Profile Picker logo" width="96" height="96">
 </p>
@@ -55,3 +57,10 @@ Fair warning: this isn't on addons.mozilla.org as a get-it-in-one-click listing 
 ## One more thing
 
 This only runs on Firefox (140 or newer) and only intercepts `youtube.com` / `google.com` pages — it can't see or touch anything else you do in the browser. If you read this far, thanks for checking it out. Hope it saves you the account-switching annoyance it used to save me.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0).
+This means anyone can use, study, modify, and share the extension — and any
+modified version you distribute must also be released under GPL-3.0 with its
+source available. See the [LICENSE](LICENSE) file for full details.
